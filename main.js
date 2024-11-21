@@ -20,15 +20,25 @@ console.log(
   `Server started on port ${serverPort} in stage ${process.env.NODE_ENV}`
 );
 
-const allowedOrigin = "https://joshuaingle.art"; // Your domain
+// List of allowed origins
+const allowedOrigins = [
+  "https://joshuaingle.art",
+  "https://www.joshuaingle.art",
+  // Add any other subdomains or variations here
+];
+
+// Or use a regular expression to match origins ending with 'joshuaingle.art'
+const allowedOriginRegex = /^https?:\/\/(www\.)?joshuaingle\.art(:\d+)?(\/.*)?$/i;
 
 wss.on("connection", function (ws, req) {
   const origin = req.headers.origin || req.headers.Origin;
 
+  // Log the origin for debugging
+  console.log(`Connection attempted from origin: ${origin}`);
+
   // Store the origin in the WebSocket connection object
   ws.origin = origin;
 
-  console.log(`Connection opened from origin: ${origin}`);
   console.log("Client size: ", wss.clients.size);
 
   if (wss.clients.size === 1) {
@@ -43,10 +53,10 @@ wss.on("connection", function (ws, req) {
       return;
     }
 
-    // Check if the message is from the allowed origin
-    if (ws.origin !== allowedOrigin) {
+    // Check if the message is from an allowed origin
+    if (!originIsAllowed(ws.origin)) {
       console.log(`Message from unauthorized origin: ${ws.origin}`);
-      // Optionally, you can notify the client or simply ignore the message
+      // Optionally notify the client
       // ws.send('You are not authorized to send messages.');
       return;
     }
@@ -63,6 +73,25 @@ wss.on("connection", function (ws, req) {
     }
   });
 });
+
+// Function to check if the origin is allowed
+function originIsAllowed(origin) {
+  if (!origin) {
+    return false;
+  }
+
+  // Check using regular expression
+  if (allowedOriginRegex.test(origin)) {
+    return true;
+  }
+
+  // Alternatively, check against the list of allowed origins
+  /*
+  return allowedOrigins.includes(origin);
+  */
+
+  return false;
+}
 
 // Implement broadcast function because ws doesn't have it
 const broadcast = (ws, message, includeSelf) => {
