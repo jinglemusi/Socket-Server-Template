@@ -1,10 +1,8 @@
-//test edit asdf
 const http = require("http");
 const express = require("express");
 const app = express();
 
 app.use(express.static("public"));
-// require("dotenv").config();
 
 const serverPort = process.env.PORT || 3000;
 const server = http.createServer(app);
@@ -18,37 +16,55 @@ const wss =
     : new WebSocket.Server({ port: 5001 });
 
 server.listen(serverPort);
-console.log(`Server started on port ${serverPort} in stage ${process.env.NODE_ENV}`);
+console.log(
+  `Server started on port ${serverPort} in stage ${process.env.NODE_ENV}`
+);
+
+const allowedOrigin = "https://joshuaingle.art"; // Your domain
 
 wss.on("connection", function (ws, req) {
-  console.log("Connection Opened");
+  const origin = req.headers.origin || req.headers.Origin;
+
+  // Store the origin in the WebSocket connection object
+  ws.origin = origin;
+
+  console.log(`Connection opened from origin: ${origin}`);
   console.log("Client size: ", wss.clients.size);
 
   if (wss.clients.size === 1) {
-    console.log("first connection. starting keepalive");
+    console.log("First connection. Starting keepAlive");
     keepServerAlive();
   }
 
   ws.on("message", (data) => {
     let stringifiedData = data.toString();
-    if (stringifiedData === 'pong') {
-      console.log('keepAlive');
+    if (stringifiedData === "pong") {
+      console.log("keepAlive");
       return;
     }
+
+    // Check if the message is from the allowed origin
+    if (ws.origin !== allowedOrigin) {
+      console.log(`Message from unauthorized origin: ${ws.origin}`);
+      // Optionally, you can notify the client or simply ignore the message
+      // ws.send('You are not authorized to send messages.');
+      return;
+    }
+
     broadcast(ws, stringifiedData, false);
   });
 
   ws.on("close", (data) => {
-    console.log("closing connection");
+    console.log("Closing connection");
 
     if (wss.clients.size === 0) {
-      console.log("last client disconnected, stopping keepAlive interval");
+      console.log("Last client disconnected, stopping keepAlive interval");
       clearInterval(keepAliveId);
     }
   });
 });
 
-// Implement broadcast function because of ws doesn't have it
+// Implement broadcast function because ws doesn't have it
 const broadcast = (ws, message, includeSelf) => {
   if (includeSelf) {
     wss.clients.forEach((client) => {
@@ -68,17 +84,16 @@ const broadcast = (ws, message, includeSelf) => {
 /**
  * Sends a ping message to all connected clients every 50 seconds
  */
- const keepServerAlive = () => {
+const keepServerAlive = () => {
   keepAliveId = setInterval(() => {
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send('ping');
+        client.send("ping");
       }
     });
   }, 50000);
 };
 
-
-app.get('/', (req, res) => {
-    res.send('Hello World!');
+app.get("/", (req, res) => {
+  res.send("Hello World!");
 });
