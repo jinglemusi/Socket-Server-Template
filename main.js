@@ -10,6 +10,7 @@ const WebSocket = require("ws");
 
 let keepAliveId;
 
+// Use `server` for production or port 5001 for development
 const wss =
   process.env.NODE_ENV === "production"
     ? new WebSocket.Server({ server })
@@ -21,25 +22,18 @@ console.log(
 );
 
 // List of allowed origins
-const allowedOrigins = [
-  "https://joshuaingle.art",
-  "https://www.joshuaingle.art",
-  // Add any other subdomains or variations here
-];
-
-// Or use a regular expression to match origins ending with 'joshuaingle.art'
 const allowedOriginRegex = /^https?:\/\/(www\.)?joshuaingle\.art(:\d+)?(\/.*)?$/i;
+
+// Password for connecting clients
+const ALLOWED_PASSWORD = "asdf";
 
 wss.on("connection", function (ws, req) {
   const origin = req.headers.origin || req.headers.Origin;
 
-  // Log the origin for debugging
   console.log(`Connection attempted from origin: ${origin}`);
-
-  // Store the origin in the WebSocket connection object
   ws.origin = origin;
 
-  console.log("Client size: ", wss.clients.size);
+  ws.isAuthenticated = false; // Track if the client has authenticated
 
   if (wss.clients.size === 1) {
     console.log("First connection. Starting keepAlive");
@@ -47,26 +41,34 @@ wss.on("connection", function (ws, req) {
   }
 
   ws.on("message", (data) => {
-    let stringifiedData = data.toString();
-    if (stringifiedData === "pong") {
+    const message = data.toString();
+    if (message === "pong") {
       console.log("keepAlive");
       return;
     }
 
-    // Check if the message is from an allowed origin
-    if (!originIsAllowed(ws.origin)) {
-      console.log(`Message from unauthorized origin: ${ws.origin}`);
-      // Optionally notify the client
-      // ws.send('You are not authorized to send messages.');
+    // Handle initial password authentication
+    if (!ws.isAuthenticated) {
+      if (message === ALLOWED_PASSWORD || originIsAllowed(ws.origin)) {
+        ws.isAuthenticated = true;
+        ws.send("Authenticated successfully");
+        console.log("Client authenticated");
+      } else {
+        console.log("Unauthorized client attempt");
+        ws.send("Unauthorized: Invalid password or origin");
+        ws.close(1008, "Unauthorized");
+      }
       return;
     }
 
-    broadcast(ws, stringifiedData, false);
+    // Broadcast only if authenticated
+    if (ws.isAuthenticated) {
+      broadcast(ws, message, false);
+    }
   });
 
-  ws.on("close", (data) => {
+  ws.on("close", () => {
     console.log("Closing connection");
-
     if (wss.clients.size === 0) {
       console.log("Last client disconnected, stopping keepAlive interval");
       clearInterval(keepAliveId);
@@ -79,21 +81,10 @@ function originIsAllowed(origin) {
   if (!origin) {
     return false;
   }
-
-  // Check using regular expression
-  if (allowedOriginRegex.test(origin)) {
-    return true;
-  }
-
-  // Alternatively, check against the list of allowed origins
-  /*
-  return allowedOrigins.includes(origin);
-  */
-
-  return false;
+  return allowedOriginRegex.test(origin);
 }
 
-// Implement broadcast function because ws doesn't have it
+// Implement broadcast function
 const broadcast = (ws, message, includeSelf) => {
   if (includeSelf) {
     wss.clients.forEach((client) => {
