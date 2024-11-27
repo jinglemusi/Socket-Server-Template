@@ -21,7 +21,7 @@ console.log(
   `Server started on port ${serverPort} in stage ${process.env.NODE_ENV}`
 );
 
-// List of allowed origins
+// Regular expression for allowed origin
 const allowedOriginRegex = /^https?:\/\/(www\.)?joshuaingle\.art(:\d+)?(\/.*)?$/i;
 
 // Password for connecting clients
@@ -31,28 +31,24 @@ wss.on("connection", function (ws, req) {
   const origin = req.headers.origin || req.headers.Origin;
 
   console.log(`Connection attempted from origin: ${origin}`);
-  ws.origin = origin;
-
   ws.isAuthenticated = false; // Track if the client has authenticated
 
-  if (wss.clients.size === 1) {
-    console.log("First connection. Starting keepAlive");
-    keepServerAlive();
+  // Allow connections from allowed origin without password
+  if (origin && originIsAllowed(origin)) {
+    ws.isAuthenticated = true;
+    console.log(`Client authenticated via origin: ${origin}`);
+    ws.send("Authenticated via origin");
   }
 
   ws.on("message", (data) => {
     const message = data.toString();
-    if (message === "pong") {
-      console.log("keepAlive");
-      return;
-    }
 
-    // Handle initial password authentication
+    // Handle password-based authentication for other origins
     if (!ws.isAuthenticated) {
-      if (message === ALLOWED_PASSWORD || originIsAllowed(ws.origin)) {
+      if (message === ALLOWED_PASSWORD) {
         ws.isAuthenticated = true;
-        ws.send("Authenticated successfully");
-        console.log("Client authenticated");
+        console.log("Client authenticated via password");
+        ws.send("Authenticated via password");
       } else {
         console.log("Unauthorized client attempt");
         ws.send("Unauthorized: Invalid password or origin");
@@ -61,7 +57,7 @@ wss.on("connection", function (ws, req) {
       return;
     }
 
-    // Broadcast only if authenticated
+    // Broadcast messages if authenticated
     if (ws.isAuthenticated) {
       broadcast(ws, message, false);
     }
@@ -74,17 +70,21 @@ wss.on("connection", function (ws, req) {
       clearInterval(keepAliveId);
     }
   });
+
+  // Start the keep-alive mechanism if this is the first connection
+  if (wss.clients.size === 1) {
+    console.log("First connection. Starting keepAlive");
+    keepServerAlive();
+  }
 });
 
 // Function to check if the origin is allowed
 function originIsAllowed(origin) {
-  if (!origin) {
-    return false;
-  }
+  if (!origin) return false;
   return allowedOriginRegex.test(origin);
 }
 
-// Implement broadcast function
+// Broadcast function
 const broadcast = (ws, message, includeSelf) => {
   if (includeSelf) {
     wss.clients.forEach((client) => {
