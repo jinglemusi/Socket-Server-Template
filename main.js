@@ -1,10 +1,12 @@
+// Set the password near the top of the code
+const ALLOWED_PASSWORD = "asdf"; // You can change the password here
+
 require('dotenv').config(); // For environment variables
 const http = require("http");
 const https = require("https");
 const express = require("express");
 const fs = require("fs");
 const WebSocket = require("ws");
-const jwt = require("jsonwebtoken");
 const winston = require("winston");
 
 // Configure Logger
@@ -48,13 +50,8 @@ server.listen(serverPort, () => {
     logger.info(`Server started on port ${serverPort} in stage ${process.env.NODE_ENV}`);
 });
 
-// Allowed origins regex from environment variables
-const allowedOriginRegex = process.env.ALLOWED_ORIGINS_REGEX
-    ? new RegExp(process.env.ALLOWED_ORIGINS_REGEX, 'i')
-    : /^https?:\/\/(www\.)?joshuaingle\.art(:\d+)?(\/.*)?$/i;
-
-// Password from environment variables
-const ALLOWED_PASSWORD = process.env.ALLOWED_PASSWORD || "asdf";
+// Regular expression for allowed origin
+const allowedOriginRegex = /^https?:\/\/(www\.)?joshuaingle\.art(:\d+)?(\/.*)?$/i;
 
 // WebSocket server setup
 const wss = process.env.NODE_ENV === "production"
@@ -69,6 +66,9 @@ wss.on("connection", function (ws, req) {
     logger.info(`Connection attempted from origin: ${origin}`);
 
     ws.isAuthenticated = false;
+
+    // Allow any client to connect without immediate disconnection
+    // Authentication will be handled upon receiving messages
 
     // Authenticate based on origin
     if (origin && originIsAllowed(origin)) {
@@ -88,7 +88,7 @@ wss.on("connection", function (ws, req) {
                 return;
             }
 
-            // Authentication logic
+            // Authentication logic for clients not authenticated yet
             if (!ws.isAuthenticated) {
                 if (message === ALLOWED_PASSWORD) {
                     ws.isAuthenticated = true;
@@ -97,16 +97,20 @@ wss.on("connection", function (ws, req) {
                 } else {
                     ws.send(JSON.stringify({ type: 'auth_result', success: false, message: 'Unauthorized' }));
                     logger.warn("Unauthorized client attempt");
-                    ws.close(1008, "Unauthorized");
+                    // Do not close the connection immediately; allow the client to retry
                 }
                 return;
             }
 
-            // Broadcast authenticated messages
+            // Broadcast messages if authenticated
             if (ws.isAuthenticated) {
                 const broadcastMessage = JSON.stringify({ type: 'broadcast', message: message });
                 broadcast(ws, broadcastMessage, false);
                 logger.info(`Broadcasted message: ${message}`);
+            } else {
+                // If client is not authenticated, ignore the message or send a warning
+                ws.send(JSON.stringify({ type: 'error', message: 'You must be authenticated to send messages.' }));
+                logger.warn("Unauthenticated client tried to send a message");
             }
 
         } catch (err) {
