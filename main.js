@@ -2,6 +2,9 @@ const http = require("http");
 const express = require("express");
 const app = express();
 
+// Place to set the password near the top of the code
+const PASSWORD = 'your_password_here';
+
 app.use(express.static("public"));
 
 const serverPort = process.env.PORT || 3000;
@@ -56,11 +59,31 @@ wss.on("connection", function (ws, req) {
     // Check if the message is from an allowed origin
     if (!originIsAllowed(ws.origin)) {
       console.log(`Message from unauthorized origin: ${ws.origin}`);
-      // Optionally notify the client
-      // ws.send('You are not authorized to send messages.');
-      return;
+
+      // Message is from unauthorized origin
+      // Require password
+      let messageObj;
+      try {
+        messageObj = JSON.parse(stringifiedData);
+      } catch (e) {
+        console.log(`Invalid message format from ${ws.origin}`);
+        return;
+      }
+
+      if (messageObj.password !== PASSWORD) {
+        console.log(`Invalid password from ${ws.origin}`);
+        // Optionally notify the client
+        // ws.send('Invalid password.');
+        return;
+      }
+
+      // Password is correct, proceed
+      // Remove password from message before broadcasting
+      delete messageObj.password;
+      stringifiedData = JSON.stringify(messageObj);
     }
 
+    // If origin is allowed, or password is correct, broadcast the message
     broadcast(ws, stringifiedData, false);
   });
 
