@@ -1,172 +1,128 @@
-// Set the password near the top of the code
-const ALLOWED_PASSWORD = "asdf"; // You can change the password here
-
-require('dotenv').config(); // For environment variables
 const http = require("http");
-const https = require("https");
 const express = require("express");
-const fs = require("fs");
-const WebSocket = require("ws");
-const winston = require("winston");
-
-// Configure Logger
-const logger = winston.createLogger({
-    level: "info",
-    format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.json()
-    ),
-    transports: [
-        new winston.transports.File({ filename: "error.log", level: "error" }),
-        new winston.transports.File({ filename: "combined.log" }),
-    ],
-});
-
-if (process.env.NODE_ENV !== "production") {
-    logger.add(new winston.transports.Console({
-        format: winston.format.simple(),
-    }));
-}
-
 const app = express();
 
-// Serve static files
 app.use(express.static("public"));
 
-// Load SSL certificates if in production
-let server;
-if (process.env.NODE_ENV === "production") {
-    const options = {
-        key: fs.readFileSync(process.env.SSL_KEY_PATH),
-        cert: fs.readFileSync(process.env.SSL_CERT_PATH)
-    };
-    server = https.createServer(options, app);
-} else {
-    server = http.createServer(app);
-}
-
 const serverPort = process.env.PORT || 3000;
-server.listen(serverPort, () => {
-    logger.info(`Server started on port ${serverPort} in stage ${process.env.NODE_ENV}`);
-});
-
-// Regular expression for allowed origin
-const allowedOriginRegex = /^https?:\/\/(www\.)?joshuaingle\.art(:\d+)?(\/.*)?$/i;
-
-// WebSocket server setup
-const wss = process.env.NODE_ENV === "production"
-    ? new WebSocket.Server({ server })
-    : new WebSocket.Server({ port: 5001 });
+const server = http.createServer(app);
+const WebSocket = require("ws");
 
 let keepAliveId;
 
-// Handle new connections
+const wss =
+  process.env.NODE_ENV === "production"
+    ? new WebSocket.Server({ server })
+    : new WebSocket.Server({ port: 5001 });
+
+server.listen(serverPort);
+console.log(
+  `Server started on port ${serverPort} in stage ${process.env.NODE_ENV}`
+);
+
+// List of allowed origins
+const allowedOrigins = [
+  "https://joshuaingle.art",
+  "https://www.joshuaingle.art",
+  // Add any other subdomains or variations here
+];
+
+// Or use a regular expression to match origins ending with 'joshuaingle.art'
+const allowedOriginRegex = /^https?:\/\/(www\.)?joshuaingle\.art(:\d+)?(\/.*)?$/i;
+
 wss.on("connection", function (ws, req) {
-    const origin = req.headers.origin || req.headers.Origin;
-    logger.info(`Connection attempted from origin: ${origin}`);
+  const origin = req.headers.origin || req.headers.Origin;
 
-    ws.isAuthenticated = false;
+  // Log the origin for debugging
+  console.log(`Connection attempted from origin: ${origin}`);
 
-    // Allow any client to connect without immediate disconnection
-    // Authentication will be handled upon receiving messages
+  // Store the origin in the WebSocket connection object
+  ws.origin = origin;
 
-    // Authenticate based on origin
-    if (origin && originIsAllowed(origin)) {
-        ws.isAuthenticated = true;
-        ws.send(JSON.stringify({ type: 'auth_result', success: true, via: 'origin' }));
-        logger.info(`Client authenticated via origin: ${origin}`);
+  console.log("Client size: ", wss.clients.size);
+
+  if (wss.clients.size === 1) {
+    console.log("First connection. Starting keepAlive");
+    keepServerAlive();
+  }
+
+  ws.on("message", (data) => {
+    let stringifiedData = data.toString();
+    if (stringifiedData === "pong") {
+      console.log("keepAlive");
+      return;
     }
 
-    // Handle incoming messages
-    ws.on("message", (data) => {
-        try {
-            const message = data.toString();
-
-            // Handle keep-alive pongs if needed
-            if (message === "pong") {
-                logger.info("Received pong from client");
-                return;
-            }
-
-            // Authentication logic for clients not authenticated yet
-            if (!ws.isAuthenticated) {
-                if (message === ALLOWED_PASSWORD) {
-                    ws.isAuthenticated = true;
-                    ws.send(JSON.stringify({ type: 'auth_result', success: true, via: 'password' }));
-                    logger.info("Client authenticated via password");
-                } else {
-                    ws.send(JSON.stringify({ type: 'auth_result', success: false, message: 'Unauthorized' }));
-                    logger.warn("Unauthorized client attempt");
-                    // Do not close the connection immediately; allow the client to retry
-                }
-                return;
-            }
-
-            // Broadcast messages if authenticated
-            if (ws.isAuthenticated) {
-                const broadcastMessage = JSON.stringify({ type: 'broadcast', message: message });
-                broadcast(ws, broadcastMessage, false);
-                logger.info(`Broadcasted message: ${message}`);
-            } else {
-                // If client is not authenticated, ignore the message or send a warning
-                ws.send(JSON.stringify({ type: 'error', message: 'You must be authenticated to send messages.' }));
-                logger.warn("Unauthenticated client tried to send a message");
-            }
-
-        } catch (err) {
-            logger.error("Error handling message:", err);
-            ws.send(JSON.stringify({ type: 'error', message: 'Invalid message format' }));
-        }
-    });
-
-    ws.on("close", (code, reason) => {
-        logger.info(`Connection closed: ${code} - ${reason}`);
-        if (wss.clients.size === 0) {
-            logger.info("Last client disconnected, stopping keepAlive interval");
-            clearInterval(keepAliveId);
-        }
-    });
-
-    ws.on("error", (error) => {
-        logger.error(`WebSocket error: ${error}`);
-    });
-
-    // Start keep-alive if first client connects
-    if (wss.clients.size === 1) {
-        logger.info("First connection. Starting keepAlive");
-        keepServerAlive();
+    // Check if the message is from an allowed origin
+    if (!originIsAllowed(ws.origin)) {
+      console.log(`Message from unauthorized origin: ${ws.origin}`);
+      // Optionally notify the client
+      // ws.send('You are not authorized to send messages.');
+      return;
     }
+
+    broadcast(ws, stringifiedData, false);
+  });
+
+  ws.on("close", (data) => {
+    console.log("Closing connection");
+
+    if (wss.clients.size === 0) {
+      console.log("Last client disconnected, stopping keepAlive interval");
+      clearInterval(keepAliveId);
+    }
+  });
 });
 
 // Function to check if the origin is allowed
 function originIsAllowed(origin) {
-    if (!origin) return false;
-    return allowedOriginRegex.test(origin);
+  if (!origin) {
+    return false;
+  }
+
+  // Check using regular expression
+  if (allowedOriginRegex.test(origin)) {
+    return true;
+  }
+
+  // Alternatively, check against the list of allowed origins
+  /*
+  return allowedOrigins.includes(origin);
+  */
+
+  return false;
 }
 
-// Broadcast function
+// Implement broadcast function because ws doesn't have it
 const broadcast = (ws, message, includeSelf) => {
+  if (includeSelf) {
     wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-            if (includeSelf || client !== ws) {
-                client.send(message);
-            }
-        }
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
     });
+  } else {
+    wss.clients.forEach((client) => {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  }
 };
 
-// Keep-alive mechanism
+/**
+ * Sends a ping message to all connected clients every 50 seconds
+ */
 const keepServerAlive = () => {
-    keepAliveId = setInterval(() => {
-        wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send("ping");
-            }
-        });
-    }, 50000);
+  keepAliveId = setInterval(() => {
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send("ping");
+      }
+    });
+  }, 50000);
 };
 
-// Express route
 app.get("/", (req, res) => {
-    res.send("Hello World!");
+  res.send("Hello World!");
 });
